@@ -1,16 +1,7 @@
 import React, { useState } from 'react';
-import Tippy from '@tippyjs/react';
-import 'tippy.js/dist/tippy.css';
+import { getRepository, getContents, getFileContent, parseGitHubUrl } from './api/githubApi';
 
-// Mock file system
-const fileSystem = {
-  'src/index.js': `import homu from "./homu";
-
-document.getElementById('app').innerHTML = homu;`,
-  'src/homu.js': `export default homu = 'homu.';`
-};
-
-const CodeLine = ({ line, lineNumber, onHover }) => {
+const CodeLine = ({ line, lineNumber }) => {
   const words = line.split(/(\s+)/);
   return (
     <div className="flex">
@@ -21,15 +12,9 @@ const CodeLine = ({ line, lineNumber, onHover }) => {
             return <span key={index} className="text-purple-600">{word}</span>;
           } else if (word.startsWith('"./')) {
             return (
-              <Tippy
-                key={index}
-                content={<pre className="p-2 bg-gray-100 rounded">{fileSystem[`src/${word.slice(3, -1)}`]}</pre>}
-                interactive={true}
-              >
-                <span className="text-green-600 cursor-pointer" onMouseEnter={() => onHover(word.slice(3, -1))}>
-                  {word}
-                </span>
-              </Tippy>
+              <span key={index} className="text-green-600">
+                {word}
+              </span>
             );
           } else if (word === 'export' || word === 'default') {
             return <span key={index} className="text-blue-600">{word}</span>;
@@ -49,7 +34,7 @@ const FileViewer = ({ fileName, content }) => {
       <h2 className="text-lg font-semibold mb-2">{fileName}</h2>
       <div className="bg-gray-100 p-4 rounded">
         {lines.map((line, index) => (
-          <CodeLine key={index} line={line} lineNumber={index + 1} onHover={() => {}} />
+          <CodeLine key={index} line={line} lineNumber={index + 1} />
         ))}
       </div>
     </div>
@@ -57,25 +42,132 @@ const FileViewer = ({ fileName, content }) => {
 };
 
 const GithubStyleCodeViewer = () => {
-  const [selectedFile, setSelectedFile] = useState('src/index.js');
+  const [repoUrl, setRepoUrl] = useState('');
+  const [repoInfo, setRepoInfo] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [fileContent, setFileContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // リポジトリ情報とファイル一覧を取得
+  const loadRepository = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const parsed = parseGitHubUrl(repoUrl);
+      if (!parsed) {
+        throw new Error('Invalid GitHub URL');
+      }
+
+      const { owner, repo } = parsed;
+      
+      // リポジトリ情報を取得
+      const repoData = await getRepository(owner, repo);
+      setRepoInfo(repoData);
+      
+      // ルートディレクトリのコンテンツを取得
+      const contents = await getContents(owner, repo);
+      // ファイルのみをフィルタリング
+      const fileList = contents.filter(item => item.type === 'file');
+      setFiles(fileList);
+      
+      if (fileList.length > 0) {
+        // 最初のファイルを自動的に選択
+        await selectFile(fileList[0].path);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ファイルを選択して内容を取得
+  const selectFile = async (path) => {
+    setLoading(true);
+    try {
+      const parsed = parseGitHubUrl(repoUrl);
+      const { owner, repo } = parsed;
+      
+      const fileData = await getFileContent(owner, repo, path);
+      setSelectedFile(path);
+      setFileContent(fileData.decodedContent || '');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">GitHub-style Source Code Viewer</h1>
+      
+      {/* URL入力フォーム */}
       <div className="mb-4">
-        <select
-          className="p-2 border rounded"
-          value={selectedFile}
-          onChange={(e) => setSelectedFile(e.target.value)}
+        <input
+          type="text"
+          placeholder="https://github.com/owner/repo"
+          className="p-2 border rounded w-96 mr-2"
+          value={repoUrl}
+          onChange={(e) => setRepoUrl(e.target.value)}
+        />
+        <button
+          onClick={loadRepository}
+          disabled={loading || !repoUrl}
+          className="p-2 bg-blue-500 text-white rounded disabled:bg-gray-400"
         >
-          {Object.keys(fileSystem).map((file) => (
-            <option key={file} value={file}>
-              {file}
-            </option>
-          ))}
-        </select>
+          Load Repository
+        </button>
       </div>
-      <FileViewer fileName={selectedFile} content={fileSystem[selectedFile]} />
+
+      {/* エラー表示 */}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
+
+      {/* リポジトリ情報 */}
+      {repoInfo && (
+        <div className="mb-4 p-4 bg-gray-100 rounded">
+          <h2 className="text-lg font-semibold">{repoInfo.full_name}</h2>
+          <p className="text-gray-600">{repoInfo.description}</p>
+          <p className="text-sm text-gray-500">⭐ {repoInfo.stargazers_count} stars</p>
+        </div>
+      )}
+
+      {/* ファイル選択 */}
+      {files.length > 0 && (
+        <div className="mb-4">
+          <select
+            className="p-2 border rounded"
+            value={selectedFile || ''}
+            onChange={(e) => selectFile(e.target.value)}
+            disabled={loading}
+          >
+            {files.map((file) => (
+              <option key={file.path} value={file.path}>
+                {file.path}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* ローディング表示 */}
+      {loading && (
+        <div className="text-center py-4">
+          <p>Loading...</p>
+        </div>
+      )}
+
+      {/* ファイル内容表示 */}
+      {selectedFile && fileContent && !loading && (
+        <FileViewer fileName={selectedFile} content={fileContent} />
+      )}
     </div>
   );
 };
