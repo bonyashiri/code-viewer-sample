@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { getRepository, getContents, getFileContent, parseGitHubUrl } from './api/githubApi';
+import { getRepository, getFileContent, parseGitHubUrl, getFileTree } from './api/githubApi';
+import FileTree from './components/FileTree';
 
 const CodeLine = ({ line, lineNumber }) => {
   const words = line.split(/(\s+)/);
@@ -44,13 +45,14 @@ const FileViewer = ({ fileName, content }) => {
 const GithubStyleCodeViewer = () => {
   const [repoUrl, setRepoUrl] = useState('');
   const [repoInfo, setRepoInfo] = useState(null);
-  const [files, setFiles] = useState([]);
+  const [treeData, setTreeData] = useState([]);
+  const [truncated, setTruncated] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [fileContent, setFileContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // リポジトリ情報とファイル一覧を取得
+  // リポジトリ情報とファイルツリーを取得
   const loadRepository = async () => {
     setLoading(true);
     setError(null);
@@ -67,15 +69,15 @@ const GithubStyleCodeViewer = () => {
       const repoData = await getRepository(owner, repo);
       setRepoInfo(repoData);
       
-      // ルートディレクトリのコンテンツを取得
-      const contents = await getContents(owner, repo);
-      // ファイルのみをフィルタリング
-      const fileList = contents.filter(item => item.type === 'file');
-      setFiles(fileList);
+      // Git Trees APIでファイルツリーを取得
+      const treeResult = await getFileTree(owner, repo);
+      setTreeData(treeResult.tree);
+      setTruncated(treeResult.truncated);
       
-      if (fileList.length > 0) {
-        // 最初のファイルを自動的に選択
-        await selectFile(fileList[0].path);
+      // ツリーからファイルのみを抽出して最初のファイルを選択
+      const firstFile = treeResult.tree.find(item => item.type === 'blob');
+      if (firstFile) {
+        await selectFile(firstFile.path);
       }
     } catch (err) {
       setError(err.message);
@@ -139,21 +141,24 @@ const GithubStyleCodeViewer = () => {
         </div>
       )}
 
-      {/* ファイル選択 */}
-      {files.length > 0 && (
-        <div className="mb-4">
-          <select
-            className="p-2 border rounded"
-            value={selectedFile || ''}
-            onChange={(e) => selectFile(e.target.value)}
-            disabled={loading}
-          >
-            {files.map((file) => (
-              <option key={file.path} value={file.path}>
-                {file.path}
-              </option>
-            ))}
-          </select>
+      {/* ファイルツリーとコンテンツ表示 */}
+      {treeData.length > 0 && (
+        <div className="flex gap-4">
+          {/* ファイルツリー */}
+          <div className="w-1/3">
+            <FileTree 
+              treeData={treeData} 
+              onFileSelect={selectFile}
+              truncated={truncated}
+            />
+          </div>
+          
+          {/* ファイル内容表示 */}
+          <div className="w-2/3">
+            {selectedFile && fileContent && !loading && (
+              <FileViewer fileName={selectedFile} content={fileContent} />
+            )}
+          </div>
         </div>
       )}
 
@@ -164,10 +169,6 @@ const GithubStyleCodeViewer = () => {
         </div>
       )}
 
-      {/* ファイル内容表示 */}
-      {selectedFile && fileContent && !loading && (
-        <FileViewer fileName={selectedFile} content={fileContent} />
-      )}
     </div>
   );
 };

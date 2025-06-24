@@ -42,6 +42,45 @@ export async function getFileContent(owner, repo, path) {
   return data;
 }
 
+// リポジトリのデフォルトブランチを取得
+export async function getDefaultBranch(owner, repo) {
+  const repoData = await getRepository(owner, repo);
+  return repoData.default_branch;
+}
+
+// Git Trees APIを使用してファイルツリーを取得
+export async function getFileTree(owner, repo, branch = null) {
+  try {
+    // ブランチが指定されていない場合はデフォルトブランチを取得
+    if (!branch) {
+      branch = await getDefaultBranch(owner, repo);
+    }
+
+    // ブランチの最新コミットSHAを取得
+    const branchResponse = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}/branches/${branch}`);
+    if (!branchResponse.ok) {
+      throw new Error(`Failed to fetch branch: ${branchResponse.status}`);
+    }
+    const branchData = await branchResponse.json();
+    const treeSha = branchData.commit.commit.tree.sha;
+
+    // Git Trees APIで再帰的にツリーを取得
+    const treeResponse = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`);
+    if (!treeResponse.ok) {
+      throw new Error(`Failed to fetch tree: ${treeResponse.status}`);
+    }
+    const treeData = await treeResponse.json();
+
+    return {
+      tree: treeData.tree,
+      truncated: treeData.truncated || false
+    };
+  } catch (error) {
+    console.error('Error fetching file tree:', error);
+    throw error;
+  }
+}
+
 // GitHubのURLからowner/repoを抽出
 export function parseGitHubUrl(url) {
   const regex = /github\.com\/([^\/]+)\/([^\/]+)/;
